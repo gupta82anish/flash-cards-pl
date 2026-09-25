@@ -13,12 +13,19 @@ enum TextRecognizer {
     }
 
     /// Reads one page. Tries the upright orientation first, and the other three
-    /// if the text looks sideways or upside down (low confidence).
+    /// if the text looks sideways or upside down.
+    ///
+    /// Vision reads rotated text correctly (it detects each line's direction), so
+    /// confidence alone stays high on a sideways page and can't reveal the rotation —
+    /// but the bounding boxes come back in the rotated frame, which breaks pairing.
+    /// The reliable signal is box shape: upright Latin text lines are wider than tall,
+    /// sideways ones are taller than wide. We pick the orientation whose boxes are
+    /// predominantly horizontal, using confidence only to tell up from upside-down.
     static func recognize(image: UIImage, page: Int, languageCorrection: Bool) -> (segments: [Segment], orientation: String) {
         guard let cgImage = normalized(image) else { return ([], "unreadable") }
 
         let first = run(cgImage, orientation: .up, page: page, languageCorrection: languageCorrection)
-        if first.meanConfidence >= 0.6 && first.characters >= 40 {
+        if first.meanConfidence >= 0.6 && first.characters >= 40 && first.horizontalFraction >= 0.5 {
             return (first.segments, "up")
         }
 
@@ -26,7 +33,7 @@ enum TextRecognizer {
         let others: [(CGImagePropertyOrientation, String)] = [(.right, "right"), (.left, "left"), (.down, "down")]
         for (orientation, name) in others {
             let attempt = run(cgImage, orientation: orientation, page: page, languageCorrection: languageCorrection)
-            if attempt.score > best.0.score { best = (attempt, name) }
+            if attempt.selectionScore > best.0.selectionScore { best = (attempt, name) }
         }
         return (best.0.segments, best.1)
     }
@@ -38,6 +45,10 @@ enum TextRecognizer {
         var characters: Int
         var meanConfidence: Float
         var score: Float
+        /// Fraction of multi-character lines whose box is wider than tall (upright text ≈ 1, sideways ≈ 0).
+        var horizontalFraction: Float
+        /// Prefers an upright page (horizontal boxes), then higher confidence to break up-vs-down ties.
+        var selectionScore: Float { horizontalFraction * 2 + meanConfidence }
     }
 
     private static func run(_ cgImage: CGImage, orientation: CGImagePropertyOrientation, page: Int, languageCorrection: Bool) -> Attempt {
@@ -51,7 +62,7 @@ enum TextRecognizer {
         do {
             try handler.perform([request])
         } catch {
-            return Attempt(segments: [], characters: 0, meanConfidence: 0, score: 0)
+            return Attempt(segments: [], characters: 0, meanConfidence: 0, score: 0, horizontalFraction: 0)
         }
 
         var segments: [Segment] = []
@@ -60,17 +71,31 @@ enum TextRecognizer {
         var score: Float = 0
         let observations = request.results ?? []
 
+        // Box aspect is measured in pixels; a right/left rotation swaps the frame's width and height.
+        let swaps = (orientation == .right || orientation == .left)
+        let frameW = CGFloat(swaps ? cgImage.height : cgImage.width)
+        let frameH = CGFloat(swaps ? cgImage.width : cgImage.height)
+        var shapedLines = 0
+        var wideLines = 0
+
         for observation in observations {
             guard let candidate = observation.topCandidates(1).first else { continue }
             let count = candidate.string.count
             characters += count
             confidenceSum += candidate.confidence
             score += Float(count) * candidate.confidence
+            if count >= 3 {
+                shapedLines += 1
+                let box = observation.boundingBox
+                if box.width * frameW > box.height * frameH { wideLines += 1 }
+            }
             segments += split(candidate: candidate, observation: observation, page: page)
         }
 
         let mean = observations.isEmpty ? 0 : confidenceSum / Float(observations.count)
-        return Attempt(segments: segments, characters: characters, meanConfidence: mean, score: score)
+        let horizontal = shapedLines == 0 ? 0 : Float(wideLines) / Float(shapedLines)
+        return Attempt(segments: segments, characters: characters,
+                       meanConfidence: mean, score: score, horizontalFraction: horizontal)
     }
 
     /// Vision sometimes returns two table cells as one line ("być   to be").

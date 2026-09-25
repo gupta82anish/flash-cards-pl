@@ -1,5 +1,71 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Xcode — user-specific and build state
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+DerivedData/
+build/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Xcode workspace / scheme noise (keep shared schemes)
+*.xcscmblueprint
+*.xccheckout
+*.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+# Uncomment if you vendor dependencies instead of resolving them:
+# Packages/
+
+# CocoaPods (uncomment Pods/ to stop vendoring pods)
+# Pods/
+*.podspec.lock
+
+# Carthage
+Carthage/Build/
+Carthage/Checkouts/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# Provisioning / signing — never commit these
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.cer
+*.certSigningRequest
+
+# Build artifacts / archives
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xcarchive
+
+# Injection / editor
+*.hmap
+*~.nib
+iOSInjectionProject/
+.idea/
+*.swp
+
+# Python (samples/ helper scripts)
 __pycache__/
 *.pyc
-.DS_Store
-xcuserdata/
-DerivedData/

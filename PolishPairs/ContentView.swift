@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var languageCorrection = false
     @State private var copied = false
     @State private var supported: [String] = []
+    @State private var mode: ScanMode = .auto
 
     private var polishAvailable: Bool { supported.contains { $0.lowercased().hasPrefix("pl") } }
 
@@ -23,6 +24,15 @@ struct ContentView: View {
                           systemImage: polishAvailable ? "checkmark.circle.fill" : "xmark.octagon.fill")
                         .foregroundStyle(polishAvailable ? .green : .red)
                     Toggle("Language correction", isOn: $languageCorrection)
+                }
+
+                Section {
+                    Picker("Page type", selection: $mode) {
+                        ForEach(ScanMode.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    Text("Pick the page type before scanning. \"Auto\" tries both — use it only for a page with a table and an exercise together.")
                 }
 
                 Section {
@@ -55,9 +65,6 @@ struct ContentView: View {
                             UIPasteboard.general.string = r.report
                             copied = true
                         }
-                    }
-                    if let title = r.title {
-                        Section("Deck title") { Text(title) }
                     }
                     Section("Table pairs (\(r.tablePairs.count))") {
                         ForEach(r.tablePairs) { PairRow(pair: $0) }
@@ -117,6 +124,7 @@ struct ContentView: View {
         let pages = images
         let correction = languageCorrection
         let languages = supported
+        let scanMode = mode
         Task.detached(priority: .userInitiated) {
             var segments: [Segment] = []
             var orientations: [String] = []
@@ -125,7 +133,7 @@ struct ContentView: View {
                 segments += r.segments
                 orientations.append(r.orientation)
             }
-            var analysis = Analyzer(tag: LanguageTagger.tag).analyze(segments)
+            var analysis = Analyzer(tag: LanguageTagger.tag).analyze(segments, mode: scanMode)
             analysis.orientations = orientations
             analysis.report = ReportBuilder.build(analysis, supportedLanguages: languages, languageCorrection: correction)
             await MainActor.run {

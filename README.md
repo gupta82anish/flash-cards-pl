@@ -20,16 +20,16 @@ With a free Apple ID the app stops opening after 7 days. Press Run again to rein
 
 ## Test it
 
-1. At the top of the app, check for the green line **Polish text recognition: available**.
-2. **Tables:** tap **Scan pages**, scan one vocabulary page, and tap **Save**.
-3. **Numbered exercises:** in **one** scan, capture the English page and then the Polish page, then tap **Save**.
+1. At the top of the app, check for the green line **Polish text recognition: available**, then set **Page type** (Table / Numbered / Auto) to match what you're about to scan.
+2. **Tables:** set Page type to **Table**, tap **Scan pages**, scan one vocabulary page, and tap **Save**.
+3. **Numbered exercises:** set Page type to **Numbered**; in **one** scan, capture the English page and then the Polish page (or a single page that has both columns), then tap **Save**.
 4. **Choose photos** lets you test with photos you've already taken.
 5. Tap **Copy results** and paste the report into the chat with Claude.
 6. Goal: 5 table pages and 5 exercises. For one of them, turn **Language correction** on, tap **Re-run on the same pages**, and send both reports.
 
 ## If Xcode shows an error
 
-This code was written without a Mac, so it has never been compiled. If the build fails, copy the red error text from Xcode (the Issue navigator, ⌘5) and paste it into the chat.
+The project builds cleanly for the simulator (`xcodebuild … -sdk iphonesimulator build`). If a build still fails on your Mac — signing, a device SDK mismatch, etc. — copy the red error text from Xcode (the Issue navigator, ⌘5) and paste it into the chat.
 
 ## Files
 

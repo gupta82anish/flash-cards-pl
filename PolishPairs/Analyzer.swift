@@ -12,7 +12,6 @@ struct Analyzer {
 
     private static let markerRe = try! NSRegularExpression(pattern: #"^(\d{1,2})[.,]$"#)
     private static let inlineRe = try! NSRegularExpression(pattern: #"^(\d{1,2})[.,]\s+(\S.*)$"#)
-    private static let leadingNumberRe = try! NSRegularExpression(pattern: #"^\s*\d{1,2}[.,]?\s*"#)
 
     private final class Marker {
         let number: Int
@@ -50,11 +49,12 @@ struct Analyzer {
         var page: Int
     }
 
-    func analyze(_ input: [Segment]) -> AnalysisResult {
+    func analyze(_ input: [Segment], mode: ScanMode = .auto) -> AnalysisResult {
         var segs = input.filter { Self.hasLetter($0.text) || Self.match(Self.markerRe, $0.text) != nil }
         for i in segs.indices { segs[i].lang = tag(segs[i].text) }
 
         var result = AnalysisResult()
+        result.mode = mode
         result.segments = segs
         guard !segs.isEmpty else {
             result.problems.append("No text found.")
@@ -62,19 +62,18 @@ struct Analyzer {
         }
 
         let medianHeight = median(segs.map { $0.height })
-        let headings = Set(segs.indices.filter { segs[$0].height > 1.6 * medianHeight })
         let pages = Array(Set(segs.map { $0.page })).sorted()
         var used = Set<Int>()
-
-        // ---------- Title: tallest heading in the top 35% of the first page ----------
-        let titleCandidates = headings.filter { segs[$0].page == pages[0] && segs[$0].midY < 0.35 && Self.hasLetter(segs[$0].text) }
-        if let t = titleCandidates.max(by: { segs[$0].height < segs[$1].height }) {
-            result.title = Self.stripLeadingNumber(segs[t].text)
-        }
+        var members = Set<Int>()   // segments that belong to a real (≥3) numbered list
+        var numbered: [NumberedList] = []
 
         // ---------- Layout B: numbered lists ----------
+        if mode.runsNumbered {
+        // Detect markers over ALL segments (headings are not excluded yet). A lone
+        // tall title can match the inline pattern, but it survives only if it joins
+        // a list of ≥3, so it can never masquerade as numbered item 1.
         var markers: [Marker] = []
-        for (i, s) in segs.enumerated() where !headings.contains(i) {
+        for (i, s) in segs.enumerated() {
             if let g = Self.match(Self.markerRe, s.text), let n = Int(g[0]) {
                 markers.append(Marker(number: n, segIndex: i, segment: s))
             } else if let g = Self.match(Self.inlineRe, s.text), let n = Int(g[0]) {
@@ -85,12 +84,12 @@ struct Analyzer {
                 markers.append(m)
             }
         }
-        for m in markers { used.insert(m.segIndex) }
+        let markerIndices = Set(markers.map { $0.segIndex })
 
         // A marker on its own ("11.") takes the text start from the nearest segment to its right.
         for m in markers where m.textX == nil {
             var best: (CGFloat, Int)?
-            for (j, s) in segs.enumerated() where !used.contains(j) && !headings.contains(j) && s.page == m.page {
+            for (j, s) in segs.enumerated() where !markerIndices.contains(j) && s.page == m.page {
                 guard s.rect.minX > m.x, s.rect.minX - m.segMaxX < 0.15, abs(s.midY - m.y) < 1.5 * m.h else { continue }
                 let d = abs(s.midY - m.y)
                 if best == nil || d < best!.0 { best = (d, j) }
@@ -113,8 +112,8 @@ struct Analyzer {
             if !current.isEmpty { lists.append(current) }
         }
 
-        var numbered: [NumberedList] = []
         for var list in lists where list.count >= 3 {
+            for m in list { used.insert(m.segIndex); members.insert(m.segIndex) }
             list.sort { $0.y < $1.y }
             let textX = median(list.compactMap { $0.textX })
             let pitch = median(zip(list, list.dropFirst()).map { $1.y - $0.y })
@@ -122,9 +121,26 @@ struct Analyzer {
             let high = list[list.count - 1].y + pitch
             let page = list[0].page
 
-            // Unnumbered lines aligned with the text column belong to the nearest numbered item
-            // (the continuation can sit above or below the number).
-            for (j, s) in segs.enumerated() where !used.contains(j) && !headings.contains(j) && s.page == page {
+            // A bare marker ("1.") claims the text on its own row to the right. Done
+            // per-row so a skewed page (its text column drifting in x) can't strand
+            // the topmost items the way the column band below would.
+            for m in list where m.lines.isEmpty {
+                var best: (CGFloat, Int)?
+                for (j, s) in segs.enumerated() where !used.contains(j) && s.page == page {
+                    guard s.rect.minX > m.x, s.rect.minX - m.segMaxX < 0.15, abs(s.midY - m.y) < 1.5 * m.h else { continue }
+                    let d = abs(s.midY - m.y)
+                    if best == nil || d < best!.0 { best = (d, j) }
+                }
+                if let b = best {
+                    m.lines.append((segs[b.1].midY, segs[b.1].text))
+                    used.insert(b.1); members.insert(b.1)
+                }
+            }
+
+            // Remaining unnumbered lines aligned with the text column belong to the nearest
+            // numbered item (a continuation can sit above or below the number).
+            for (j, s) in segs.enumerated() where !used.contains(j) && s.page == page {
+                if s.height < 0.5 * medianHeight { continue }   // footer / page-number bleed, not a real line
                 guard abs(s.rect.minX - textX) <= 0.025, s.midY >= low, s.midY <= high else { continue }
                 guard let nearest = list.min(by: { abs($0.y - s.midY) < abs($1.y - s.midY) }) else { continue }
                 if abs(nearest.y - s.midY) < 1.2 * pitch {
@@ -143,7 +159,14 @@ struct Analyzer {
             let lang: Lang = pl > en ? .polish : (en > pl ? .english : .unknown)
             numbered.append(NumberedList(lang: lang, items: items, page: page))
         }
+        } // mode.runsNumbered
 
+        // Headings = tall lines that are NOT part of a numbered list (a large page
+        // title, not an inflated body item). We don't surface a deck title, but we
+        // still set these aside so a big title can't be mispaired in Layout A.
+        let headings = Set(segs.indices.filter { segs[$0].height > 1.6 * medianHeight && !members.contains($0) })
+
+        if mode.runsNumbered {
         var usedPolishLists = Set<Int>()
         for e in numbered.indices where numbered[e].lang == .english {
             var best: (Int, Int)?
@@ -158,9 +181,12 @@ struct Analyzer {
             usedPolishLists.insert(b.1)
             let english = numbered[e].items
             let polish = numbered[b.1].items
-            let maxNumber = Set(english.keys).union(polish.keys).max() ?? 0
-            guard maxNumber >= 1 else { continue }
-            for n in 1...maxNumber {
+            // Iterate only across the range this page actually covers (the book's
+            // exercises don't start at 1), so a "missing on both" is a real interior
+            // gap, not a number that was never on the page.
+            let numbers = Set(english.keys).union(polish.keys)
+            guard let lo = numbers.min(), let hi = numbers.max() else { continue }
+            for n in lo...hi {
                 switch (polish[n], english[n]) {
                 case let (p?, en?):
                     result.numberedPairs.append(Pair(polish: p, english: en, source: "#\(n)"))
@@ -169,7 +195,7 @@ struct Analyzer {
                 case (_?, nil):
                     result.problems.append("#\(n): English item not found")
                 default:
-                    result.problems.append("#\(n): missing on both pages")
+                    result.problems.append("#\(n): missing on both pages (OCR may have dropped it)")
                 }
             }
         }
@@ -179,8 +205,10 @@ struct Analyzer {
         for l in numbered where l.lang == .unknown {
             result.problems.append("A numbered list on page \(l.page + 1) could not be identified as Polish or English.")
         }
+        } // mode.runsNumbered
 
         // ---------- Layout A: vocabulary tables ----------
+        if mode.runsTable {
         for page in pages {
             let rest = segs.indices.filter {
                 !used.contains($0) && !headings.contains($0) && segs[$0].page == page
@@ -233,26 +261,84 @@ struct Analyzer {
                 usedRuns.insert(e)
 
                 let polishRows = P.indices.sorted { segs[$0].midY < segs[$1].midY }
+                let englishLines = runs[e].indices.sorted { segs[$0].midY < segs[$1].midY }
                 let pitch = polishRows.count > 1
                     ? median(zip(polishRows, polishRows.dropFirst()).map { segs[$1].midY - segs[$0].midY })
                     : 2 * medianHeight
-                var answers: [Int: [(CGFloat, String)]] = [:]
-                for j in runs[e].indices {
-                    let s = segs[j]
-                    guard let row = polishRows.min(by: { abs(segs[$0].midY - s.midY) < abs(segs[$1].midY - s.midY) }) else { continue }
-                    if abs(segs[row].midY - s.midY) < 0.6 * pitch {
-                        answers[row, default: []].append((s.midY, s.text))
-                        used.insert(j)
+                let band = 0.75 * pitch     // a line links to the nearest opposite-column line within this
+                let mergeT = 0.8 * pitch    // wrapped/gendered lines are tighter than the entry pitch
+                func mid(_ k: Int) -> CGFloat { segs[k].midY }
+
+                // Union-find over Polish rows and English lines (segment indices are unique, so
+                // they share one parent map).
+                var parent: [Int: Int] = [:]
+                for j in polishRows + englishLines { parent[j] = j }
+                func find(_ x: Int) -> Int {
+                    var r = x
+                    while parent[r]! != r { r = parent[r]! }
+                    var c = x
+                    while parent[c]! != r { let n = parent[c]!; parent[c] = r; c = n }
+                    return r
+                }
+                func union(_ a: Int, _ b: Int) {
+                    let ra = find(a), rb = find(b)
+                    if ra != rb { parent[ra] = rb }
+                }
+                // Nearest opposite-column line for each line (regardless of distance).
+                let nearE = Dictionary(uniqueKeysWithValues: polishRows.map { r in
+                    (r, englishLines.min(by: { abs(mid($0) - mid(r)) < abs(mid($1) - mid(r)) })) })
+                let nearP = Dictionary(uniqueKeysWithValues: englishLines.map { e in
+                    (e, polishRows.min(by: { abs(mid($0) - mid(e)) < abs(mid($1) - mid(e)) })) })
+                // R1: mutual-nearest cross-link within `band` (2 English for 1 Polish, or vice versa).
+                var crossed = Set<Int>()
+                for e in englishLines {
+                    if let r = nearP[e] ?? nil, abs(mid(r) - mid(e)) < band { union(e, r); crossed.insert(e); crossed.insert(r) }
+                }
+                for r in polishRows {
+                    if let e = nearE[r] ?? nil, abs(mid(e) - mid(r)) < band { union(r, e); crossed.insert(r); crossed.insert(e) }
+                }
+                // R2a: an orphan line (no cross-link) joins its nearest same-column neighbour.
+                for seq in [polishRows, englishLines] {
+                    for i in seq.indices where !crossed.contains(seq[i]) {
+                        let nb = [i - 1, i + 1].filter { seq.indices.contains($0) }.map { seq[$0] }
+                        if let o = nb.min(by: { abs(mid($0) - mid(seq[i])) < abs(mid($1) - mid(seq[i])) }),
+                           abs(mid(o) - mid(seq[i])) < mergeT { union(seq[i], o) }
                     }
                 }
-                for row in polishRows {
-                    guard let lines = answers[row] else { continue }
-                    let english = lines.sorted { $0.0 < $1.0 }.map { $0.1 }.joined(separator: " ")
-                    result.tablePairs.append(Pair(polish: segs[row].text, english: english, source: "table, page \(page + 1)"))
-                    used.insert(row)
+                // R2b: merge two adjacent cells that are ONE entry wrapped in both columns
+                // (e.g. "Wszystko"/"w porządku." <-> "Everything's"/"fine."). A wrap gap is a
+                // LOCAL MINIMUM — tighter on both sides than the neighbouring entry gaps — which
+                // tells it apart from two separate but tightly-spaced entries (fiancé/fiancée).
+                // Conservative at the column edges.
+                if polishRows.count >= 2 {
+                    for i in 0..<(polishRows.count - 1) where i - 1 >= 0 && i + 2 < polishRows.count {
+                        let a = polishRows[i], b = polishRows[i + 1]
+                        let g = mid(b) - mid(a)
+                        guard g < mergeT, g < mid(a) - mid(polishRows[i - 1]), g < mid(polishRows[i + 2]) - mid(b) else { continue }
+                        if let ea = nearE[a] ?? nil, let eb = nearE[b] ?? nil, ea != eb, abs(mid(ea) - mid(eb)) < mergeT {
+                            union(a, b)
+                        }
+                    }
+                }
+                let polishSet = Set(polishRows)
+                var comps: [Int: [Int]] = [:]
+                for j in polishRows + englishLines { comps[find(j), default: []].append(j) }
+                var cards: [(CGFloat, String, String)] = []
+                for members in comps.values {
+                    let pls = members.filter { polishSet.contains($0) }.sorted { segs[$0].midY < segs[$1].midY }
+                    let ens = members.filter { !polishSet.contains($0) }.sorted { segs[$0].midY < segs[$1].midY }
+                    guard let first = pls.first, !ens.isEmpty else { continue }
+                    cards.append((segs[first].midY,
+                                  pls.map { segs[$0].text }.joined(separator: " "),
+                                  ens.map { segs[$0].text }.joined(separator: " ")))
+                    for k in pls + ens { used.insert(k) }
+                }
+                for card in cards.sorted(by: { $0.0 < $1.0 }) {
+                    result.tablePairs.append(Pair(polish: card.1, english: card.2, source: "table, page \(page + 1)"))
                 }
             }
         }
+        } // mode.runsTable
 
         // ---------- Leftovers ----------
         result.leftovers = segs.indices
@@ -281,11 +367,6 @@ struct Analyzer {
 
     private static func hasLetter(_ s: String) -> Bool {
         s.contains { $0.isLetter }
-    }
-
-    private static func stripLeadingNumber(_ s: String) -> String {
-        let ns = s as NSString
-        return leadingNumberRe.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: ns.length), withTemplate: "")
     }
 
     /// Returns the capture groups of the first match, or nil.

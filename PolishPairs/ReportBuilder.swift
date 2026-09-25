@@ -10,7 +10,7 @@ enum ReportBuilder {
         out.append("Supported languages: \(supportedLanguages.joined(separator: ", "))")
         out.append("Language correction: \(languageCorrection ? "on" : "off")")
         out.append("Pages: \(r.orientations.count) (orientation: \(r.orientations.joined(separator: ", ")))")
-        out.append("Deck title: \(r.title ?? "-")")
+        out.append("Page type: \(r.mode.label)")
         out.append("")
 
         out.append("TABLE PAIRS (\(r.tablePairs.count))")
