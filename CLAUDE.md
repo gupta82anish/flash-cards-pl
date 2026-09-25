@@ -73,7 +73,10 @@ Each `repro_*.py` replays a real device report; add a new one whenever a fresh r
 - Session work is committed on branch **`analyzer-pairing-fixes`** (commit `2b94e2b`), **not pushed**; `main` is untouched. To land it: `git checkout main && git merge analyzer-pairing-fixes`, then push when ready.
 
 ## Next steps, in order
-1. **Diacritics:** have A.G. re-scan a page with **Language correction ON** and compare — likely the cheapest quality win.
-2. **Review screen (Phase 1):** scan → editable review (edit / merge / split / delete / manual pairing) → decks in SwiftData. This also *is* the fix for the two ambiguous cases above (upside-down numbered, table over-merge), so it's higher priority than more threshold tuning.
-3. Optionally revisit **number-key pairing** for Layout B if upside-down/rotated numbered scans keep happening.
-4. Roadmap after Phase 1: Phase 2 — flashcards (PL→EN and EN→PL), FSRS, pl-PL audio (`AVSpeechSynthesizer`). Phase 3 — duplicate detection, stats, TestFlight. Phase 4 — DeepSeek text fallback for messy pages, typing/listening modes, Anki/CSV export.
+**The one thing that matters: turn extraction into saved, reviewable decks.** The app still saves nothing — it's an extractor with no home for its output. Everything below #1 is secondary until that exists.
+
+1. **Review screen + persistence (Phase 1) — the real next step.** scan → editable review list (edit text / **merge** / **split** / delete / manual pairing) → decks in SwiftData. This does double duty: it's *also* the correct fix for the two genuinely-ambiguous OCR cases (upside-down numbered scan, table wrap over-merge). A one-tap manual fix beats more heuristics there.
+2. **Diacritics — cheap, do it alongside #1.** Have A.G. re-scan one page with **Language correction ON** and compare; if it recovers the dropped `ć`/`ą`, flip the default. ~5 min, possible real win.
+3. **Do NOT keep tuning Analyzer thresholds.** Diminishing returns — the remaining misses are genuinely ambiguous (a wrapped entry vs two tight entries can look identical), so tuning trades one scan's correctness for another's. Let the review screen absorb them.
+4. **Number-key pairing (Layout B rewrite) — only if rotated/upside-down numbered scans keep happening.** Re-scanning right-side-up is free; the rewrite isn't. Parked (see Known limitations).
+5. **Later roadmap (Phase 2+), premature until pairs persist and A.G. has used the review flow):** Phase 2 — flashcards (PL→EN and EN→PL), FSRS, pl-PL audio (`AVSpeechSynthesizer`). Phase 3 — duplicate detection, stats, TestFlight. Phase 4 — DeepSeek text fallback for messy pages, typing/listening modes, Anki/CSV export.
