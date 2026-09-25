@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import PhotosUI
 import VisionKit
 import UIKit
@@ -13,6 +14,8 @@ struct ContentView: View {
     @State private var copied = false
     @State private var supported: [String] = []
     @State private var mode: ScanMode = .auto
+    @State private var savedMessage: String?
+    @Environment(\.modelContext) private var context
 
     private var polishAvailable: Bool { supported.contains { $0.lowercased().hasPrefix("pl") } }
 
@@ -61,6 +64,9 @@ struct ContentView: View {
 
                 if let r = result {
                     Section {
+                        let count = r.tablePairs.count + r.numberedPairs.count
+                        Button(savedMessage ?? "Save \(count) cards") { save(r) }
+                            .disabled(count == 0 || savedMessage != nil)
                         Button(copied ? "Copied — paste it into the chat" : "Copy results") {
                             UIPasteboard.general.string = r.report
                             copied = true
@@ -84,7 +90,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle("Polish Pairs test")
+            .navigationTitle("Scan")
             .sheet(isPresented: $showScanner) {
                 DocumentScanner { scanned in
                     showScanner = false
@@ -118,9 +124,27 @@ struct ContentView: View {
         }
     }
 
+    /// Adds the scanned pairs as cards — table pairs to Words, numbered pairs to Sentences — skipping any already saved.
+    private func save(_ r: AnalysisResult) {
+        let existing = (try? context.fetch(FetchDescriptor<Card>())) ?? []
+        var seen = Set(existing.map { Card.key($0.polish, $0.english) })
+        var added: [CardKind: Int] = [:]
+        for (pairs, kind) in [(r.tablePairs, CardKind.words), (r.numberedPairs, CardKind.sentences)] {
+            for p in pairs where seen.insert(Card.key(p.polish, p.english)).inserted {
+                context.insert(Card(polish: p.polish, english: p.english, kind: kind))
+                added[kind, default: 0] += 1
+            }
+        }
+        let parts = CardKind.allCases.compactMap { k in added[k].map { "\($0) \(k.label.lowercased())" } }
+        let dupes = r.tablePairs.count + r.numberedPairs.count - added.values.reduce(0, +)
+        savedMessage = (parts.isEmpty ? "Nothing new" : "Saved " + parts.joined(separator: ", "))
+            + (dupes > 0 ? " (\(dupes) already saved)" : "")
+    }
+
     private func run() {
         busy = true
         copied = false
+        savedMessage = nil
         let pages = images
         let correction = languageCorrection
         let languages = supported
