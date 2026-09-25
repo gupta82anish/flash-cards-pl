@@ -13,6 +13,7 @@ struct CardsView: View {
     @State private var editing: Card?
     @State private var adding = false
     @State private var confirmReset: Reset?
+    @State private var search = ""
 
     /// Development resets.
     private enum Reset {
@@ -49,7 +50,14 @@ struct CardsView: View {
     }
 
     private var shown: [Card] {
-        cards.filter { (deck == nil || $0.kind == deck) && filter.includes($0) }
+        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
+        return cards.filter { card in
+            (deck == nil || card.kind == deck)
+                && filter.includes(card)
+                && (query.isEmpty
+                    || card.polish.lowercased().contains(query)
+                    || card.english.lowercased().contains(query))
+        }
     }
 
     var body: some View {
@@ -60,6 +68,8 @@ struct CardsView: View {
                                            description: Text("Scan a page in the Scan tab and tap Save cards, or add one with +."))
                 } else {
                     cardList
+                        .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .automatic),
+                                    prompt: "Search Polish or English")
                 }
             }
             .navigationTitle("Cards")
@@ -126,7 +136,8 @@ struct CardsView: View {
 
             Section("\(deck?.label ?? "All decks") · \(filter.label) (\(shown.count))") {
                 if shown.isEmpty {
-                    Text("No cards match.").foregroundStyle(.secondary)
+                    Text(search.isEmpty ? "No cards match." : "No cards match “\(search)”.")
+                        .foregroundStyle(.secondary)
                 }
                 ForEach(shown) { card in
                     CardRow(card: card)
