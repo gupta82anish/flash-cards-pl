@@ -8,14 +8,12 @@ struct ContentView: View {
     @State private var showScanner = false
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var images: [UIImage] = []
-    @State private var result: AnalysisResult?
+    @State private var review: ReviewData?
     @State private var busy = false
-    @State private var languageCorrection = false
-    @State private var copied = false
+    @AppStorage("languageCorrection") private var languageCorrection = true
     @State private var supported: [String] = []
     @State private var mode: ScanMode = .auto
     @State private var savedMessage: String?
-    @Environment(\.modelContext) private var context
 
     private var polishAvailable: Bool { supported.contains { $0.lowercased().hasPrefix("pl") } }
 
@@ -62,35 +60,19 @@ struct ContentView: View {
                     Text("For a numbered exercise, scan the English page and the Polish page in the same scan.")
                 }
 
-                if let r = result {
+                if let savedMessage {
                     Section {
-                        let count = r.tablePairs.count + r.numberedPairs.count
-                        Button(savedMessage ?? "Save \(count) cards") { save(r) }
-                            .disabled(count == 0 || savedMessage != nil)
-                        Button(copied ? "Copied — paste it into the chat" : "Copy results") {
-                            UIPasteboard.general.string = r.report
-                            copied = true
-                        }
-                    }
-                    Section("Table pairs (\(r.tablePairs.count))") {
-                        ForEach(r.tablePairs) { PairRow(pair: $0) }
-                    }
-                    Section("Numbered pairs (\(r.numberedPairs.count))") {
-                        ForEach(r.numberedPairs) { PairRow(pair: $0) }
-                    }
-                    if !r.problems.isEmpty {
-                        Section("Problems (\(r.problems.count))") {
-                            ForEach(r.problems, id: \.self) { Text($0).foregroundStyle(.red) }
-                        }
-                    }
-                    Section("Unpaired text (\(r.leftovers.count))") {
-                        ForEach(r.leftovers) { s in
-                            Text(s.text).foregroundStyle(.orange)
-                        }
+                        Label(savedMessage, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
                     }
                 }
             }
             .navigationTitle("Scan")
+            .sheet(item: $review) { data in
+                ReviewView(data: data) { message in
+                    savedMessage = message
+                }
+            }
             .sheet(isPresented: $showScanner) {
                 DocumentScanner { scanned in
                     showScanner = false
@@ -124,26 +106,8 @@ struct ContentView: View {
         }
     }
 
-    /// Adds the scanned pairs as cards — table pairs to Words, numbered pairs to Sentences — skipping any already saved.
-    private func save(_ r: AnalysisResult) {
-        let existing = (try? context.fetch(FetchDescriptor<Card>())) ?? []
-        var seen = Set(existing.map { Card.key($0.polish, $0.english) })
-        var added: [CardKind: Int] = [:]
-        for (pairs, kind) in [(r.tablePairs, CardKind.words), (r.numberedPairs, CardKind.sentences)] {
-            for p in pairs where seen.insert(Card.key(p.polish, p.english)).inserted {
-                context.insert(Card(polish: p.polish, english: p.english, kind: kind))
-                added[kind, default: 0] += 1
-            }
-        }
-        let parts = CardKind.allCases.compactMap { k in added[k].map { "\($0) \(k.label.lowercased())" } }
-        let dupes = r.tablePairs.count + r.numberedPairs.count - added.values.reduce(0, +)
-        savedMessage = (parts.isEmpty ? "Nothing new" : "Saved " + parts.joined(separator: ", "))
-            + (dupes > 0 ? " (\(dupes) already saved)" : "")
-    }
-
     private func run() {
         busy = true
-        copied = false
         savedMessage = nil
         let pages = images
         let correction = languageCorrection
@@ -160,22 +124,11 @@ struct ContentView: View {
             var analysis = Analyzer(tag: LanguageTagger.tag).analyze(segments, mode: scanMode)
             analysis.orientations = orientations
             analysis.report = ReportBuilder.build(analysis, supportedLanguages: languages, languageCorrection: correction)
+            let finished = analysis
             await MainActor.run {
-                result = analysis
+                review = ReviewData(finished)
                 busy = false
             }
-        }
-    }
-}
-
-struct PairRow: View {
-    let pair: Pair
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(pair.polish).font(.body.weight(.semibold))
-            Text(pair.english).foregroundStyle(.secondary)
-            Text(pair.source).font(.caption2).foregroundStyle(.tertiary)
         }
     }
 }
