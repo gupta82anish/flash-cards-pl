@@ -51,8 +51,11 @@ Full plan (living doc): https://claude.ai/code/artifact/842464ca-7cfe-48dd-a27b-
 
 Coordinates are normalized with a **top-left** origin (Vision's bottom-left origin is converted in `TextRecognizer.topLeft`).
 
-## Current state (updated 2026-09-25)
-- **Builds clean.** `xcodebuild -project PolishPairs.xcodeproj -target PolishPairs -sdk iphonesimulator build` → **BUILD SUCCEEDED** (hand-written `project.pbxproj`, objectVersion 77, synchronized folder, no shared scheme; Xcode 27 / iOS 17 target). *Note: SourceKit shows "Cannot find type Segment/Lang…" false errors when reading `Analyzer.swift` alone — cross-file indexing noise; the full-target compile is the source of truth.*
+## Current state (updated 2026-09-26)
+- **The app is now a working study tool, not just an extractor:** scan → **review/edit** → save to SwiftData → **study** (typed answer, flip card, pl-PL audio) with per-card wrong/skipped/practice tracking. See the **App state** section below for what's built vs. missing.
+- **Builds clean.** `xcodebuild -project PolishPairs.xcodeproj -target PolishPairs -sdk iphonesimulator build` → **BUILD SUCCEEDED** (hand-written `project.pbxproj`, objectVersion 77, synchronized folder, no shared scheme; Xcode 27 / iOS 17 target). The synchronized folder means **new files under `PolishPairs/` are picked up automatically — no `project.pbxproj` editing to add a file.** *Note: SourceKit shows "Cannot find type Card/Segment/Lang…" and "No such module UIKit" false errors when reading a file alone — cross-file indexing noise; the full-target compile is the source of truth. Ignore the per-file diagnostics; trust the `xcodebuild` result.*
+- **Target may be set to Swift 6 language mode in Xcode** (A.G.'s Xcode flagged a Swift 6 concurrency error that `xcodebuild` at the project default didn't). Watch for concurrency-capture errors that the CLI build won't show.
+- **NOT yet run on device this session.** Everything below builds clean but the flashcards/review/audio UI hasn't been seen on A.G.'s iPhone. First device run should confirm the review sheet, study flow, and Polish audio.
 - **On-device only, no keys.** No network calls, API keys, or secrets. `NSCameraUsageDescription` is set. DeepSeek (later fallback) is the only thing that would need a key and isn't wired in.
 - **Runs on A.G.'s iPhone.** Reports show `pl-PL` present in `supportedRecognitionLanguages()` and the page-type picker in use. A.G. drives testing by scanning a page and pasting the report (`ReportBuilder`) back into chat.
 - **Analyzer is solid on upright/clean scans**, both layouts (see the two capability summaries below). It works from the real device reports that have been thrown at it; the open items are OCR quality and a couple of genuinely-ambiguous geometry cases, not structure.
@@ -76,17 +79,31 @@ Each `repro_*.py` replays a real device report; add a new one whenever a fresh r
 - **Auto-shutter can't be defaulted to Manual.** `VNDocumentCameraViewController` exposes no API for it (VisionKit limitation). A.G. chose to leave the system scanner as-is (tap Auto→Manual in-scanner each time). A custom AVFoundation scanner is the only way to change it; not pursued.
 - **Diacritics dropped with Language correction OFF** (`mówic`/`słuchac` missing `ć`, `ogladaja` missing `ą`). As of 2026-09-26 the toggle **defaults ON** — still needs a real re-scan comparison to confirm it recovers the accents without garbling other words.
 
-### Flashcards (2026-09-25, branch `flashcards`, off `analyzer-pairing-fixes`)
-A.G. redirected: **flashcards before decks/review screen.** Built: saved cards, study screen (card flips, typed answer, Submit/Skip), tracking of wrong/skipped (last outcome) + manual "needs practice" flag, filters to study just those. Builds clean; **not yet tried on device.** No FSRS scheduling yet — sessions shuffle the filtered set.
+### App state (branch `flashcards`, off `analyzer-pairing-fixes`)
+A.G. redirected mid-session: **build the learning experience first, add organisation later.** So the app skipped straight from extraction to a usable study loop, ahead of the original phase order. Two tabs: **Scan** and **Cards**.
+
+**Built and building clean:**
+- **Persistence** — SwiftData `Card` store; scanned pairs save as cards, split into two decks: **Words** (from tables) / **Sentences** (from numbered). This is the only deck split A.G. wants. Duplicate cards skipped on save.
+- **Review screen (step 1 of 2)** — scan opens `ReviewView`; edit / delete / merge / add before Save. Nothing persists until Save. **Step 2 not built:** split (for table over-merge) + manual-pair from leftovers (for upside-down numbered scan).
+- **Study** — `StudyView`: flip card, typed answer with lenient `AnswerChecker`, Submit/Skip, needs-practice flag, "I was right" override, session summary + "practise the missed". Direction PL→EN or EN→PL.
+- **Cards tab** — deck + outcome filters, pull-down **search** (both languages), edit/add/delete, dev **Reset** menu.
+- **Polish audio** — `Speaker` (`AVSpeechSynthesizer`, best pl-PL voice), 🔊 on cards + auto-read after answering.
+- **App icon** — "PL" flashcard-pair on Polish red; source in `design/app-icon.svg`, rendered with `rsvg-convert`.
+
+**Missing / next:**
+- **FSRS scheduling — the biggest gap.** Sessions just shuffle the filtered set; no spaced repetition, no "due today". This is what turns the quiz into actual learning. Card has the counters but no schedule fields yet.
+- **Review step 2** (split + manual pairing).
+- **Backup/export** — none. Deleting the app deletes all cards. CSV export (also Anki-compatible) or iCloud sync discussed but not built. A.G. asked about both.
 
 ### Git state
-- Session work is committed on branch **`analyzer-pairing-fixes`** (commit `2b94e2b`), **not pushed**; `main` is untouched. To land it: `git checkout main && git merge analyzer-pairing-fixes`, then push when ready.
+- **All session work is on branch `flashcards`, pushed to `origin`.** Commits: `78fdeff` flashcards → `6d453b6` icon → `eb0fb6b` search → `0c46961` review screen + language-correction default + Swift 6 fix.
+- `main` is untouched; the earlier `analyzer-pairing-fixes` (`2b94e2b`, the OCR work) is also unmerged. `flashcards` is branched off `analyzer-pairing-fixes`, so merging `flashcards` to `main` brings both. No PR opened yet.
 
 ## Next steps, in order
-**The one thing that matters: turn extraction into saved, reviewable decks.** The app still saves nothing — it's an extractor with no home for its output. Everything below #1 is secondary until that exists.
-
-1. **Review screen + persistence (Phase 1) — the real next step.** scan → editable review list (edit text / **merge** / **split** / delete / manual pairing) → decks in SwiftData. This does double duty: it's *also* the correct fix for the two genuinely-ambiguous OCR cases (upside-down numbered scan, table wrap over-merge). A one-tap manual fix beats more heuristics there.
-2. **Diacritics — cheap, do it alongside #1.** Have A.G. re-scan one page with **Language correction ON** and compare; if it recovers the dropped `ć`/`ą`, flip the default. ~5 min, possible real win.
-3. **Do NOT keep tuning Analyzer thresholds.** Diminishing returns — the remaining misses are genuinely ambiguous (a wrapped entry vs two tight entries can look identical), so tuning trades one scan's correctness for another's. Let the review screen absorb them.
-4. **Number-key pairing (Layout B rewrite) — only if rotated/upside-down numbered scans keep happening.** Re-scanning right-side-up is free; the rewrite isn't. Parked (see Known limitations).
-5. **Later roadmap (Phase 2+), premature until pairs persist and A.G. has used the review flow):** Phase 2 — flashcards (PL→EN and EN→PL), FSRS, pl-PL audio (`AVSpeechSynthesizer`). Phase 3 — duplicate detection, stats, TestFlight. Phase 4 — DeepSeek text fallback for messy pages, typing/listening modes, Anki/CSV export.
+1. **Run on device and confirm the whole loop** — review sheet, study flow, Polish audio, save→Cards. Nothing this session has been seen on the phone.
+2. **FSRS scheduling (the real next feature).** Add schedule fields to `Card`, sort/gate study by due date, grade from the answer outcome. This is the main thing standing between "quiz" and "spaced-repetition app".
+3. **Diacritics check — cheap.** Language correction now defaults ON. Have A.G. re-scan one page and confirm it recovers dropped `ć`/`ą` without garbling other words. If it doesn't, revisit.
+4. **Review screen step 2** — split + manual-pair-from-leftovers. Needs `Pair`/`Analyzer` to expose per-side OCR lines (additive; won't disturb `mirror.py`/fixtures).
+5. **Backup/export** — CSV export is the cheap win (no account, Anki-compatible); iCloud sync is the nicer but heavier option.
+6. **Do NOT keep tuning Analyzer thresholds** — remaining misses are genuinely ambiguous; the review screen absorbs them. Number-key pairing (Layout B rewrite) stays parked unless upside-down scans keep happening.
+7. **Later (Phase 4):** DeepSeek text fallback for messy pages, typing/listening modes.
